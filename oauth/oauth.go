@@ -94,6 +94,8 @@ import (
 	"time"
 )
 
+const AuthorizationHeader = "Authorization"
+
 // noscape[b] is true if b should not be escaped per section 3.6 of the RFC.
 var noEscape = [256]bool{
 	'A': true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true,
@@ -454,18 +456,6 @@ func (c *Client) SignForm(credentials *Credentials, method, urlStr string, form 
 	return nil
 }
 
-// SignParam adds an OAuth signature to a form.
-//
-// Deprecated: Use SignForm instead.
-func (c *Client) SignParam(credentials *Credentials, method, urlStr string, params url.Values) {
-	u, _ := url.Parse(urlStr)
-	u.RawQuery = ""
-	p, _ := c.oauthParams(&request{credentials: credentials, method: method, u: u, form: params})
-	for k, v := range p {
-		params.Set(k, v)
-	}
-}
-
 var oauthKeys = []string{
 	"oauth_consumer_key",
 	"oauth_nonce",
@@ -502,17 +492,6 @@ func (c *Client) authorizationHeader(r *request) (string, error) {
 	return string(h), nil
 }
 
-// AuthorizationHeader returns the HTTP authorization header value for given
-// method, URL and parameters.
-//
-// Deprecated: Use SetAuthorizationHeader instead.
-func (c *Client) AuthorizationHeader(credentials *Credentials, method string, u *url.URL, params url.Values) string {
-	// Signing a request can return an error. This method is deprecated because
-	// this method does not return an error.
-	v, _ := c.authorizationHeader(&request{credentials: credentials, method: method, u: u, form: params})
-	return v
-}
-
 // SetAuthorizationHeader adds an OAuth signature to a request header.
 //
 // See http://tools.ietf.org/html/rfc5849#section-3.5.1 for information about
@@ -522,7 +501,7 @@ func (c *Client) SetAuthorizationHeader(header http.Header, credentials *Credent
 	if err != nil {
 		return err
 	}
-	header.Set("Authorization", v)
+	header.Set(AuthorizationHeader, v)
 	return nil
 }
 
@@ -546,7 +525,7 @@ func (c *Client) do(ctx context.Context, urlStr string, r *request) (*http.Respo
 	if err != nil {
 		return nil, err
 	}
-	req.Header.Set("Authorization", auth)
+	req.Header.Set(AuthorizationHeader, auth)
 	if r.method == http.MethodGet {
 		req.URL.RawQuery = r.form.Encode()
 	} else {
