@@ -41,7 +41,7 @@ func ExampleClient_SetAuthorizationHeader(client *oauth.Client, credentials *oau
 	req.URL.Opaque = path
 
 	// Sign the request.
-	if err := client.SetAuthorizationHeader(req.Header, credentials, "GET", req.URL, form); err != nil {
+	if err := client.SetAuthorizationHeader(req.Header, credentials, "GET", req.URL, form, nil); err != nil {
 		return err
 	}
 

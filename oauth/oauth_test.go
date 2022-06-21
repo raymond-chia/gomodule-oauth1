@@ -296,6 +296,86 @@ func TestAuthorizationHeader(t *testing.T) {
 	}
 }
 
+func TestAuthorizationHeaderWithCustomizedFields(t *testing.T) {
+	originalTestHook := testHook
+	defer func() {
+		testHook = originalTestHook
+	}()
+
+	block, _ := pem.Decode([]byte(pemPrivateKey))
+	privateKey, err := x509.ParsePKCS1PrivateKey(block.Bytes)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for _, ot := range oauthTests {
+		testHook = func(p map[string]string) {
+			if _, ok := p["oauth_nonce"]; ok {
+				p["oauth_nonce"] = ot.nonce
+			}
+			if _, ok := p["oauth_timestamp"]; ok {
+				p["oauth_timestamp"] = ot.timestamp
+			}
+		}
+		c := Client{Credentials: ot.clientCredentials, SignatureMethod: ot.signatureMethod, PrivateKey: privateKey, OAuthKeys: []string{
+			"oauth_consumer_key",
+			"oauth_nonce",
+			"oauth_signature",
+			"oauth_signature_method",
+			"oauth_timestamp",
+			"oauth_token",
+			"oauth_version",
+			"oauth_callback",
+			"oauth_verifier",
+			"oauth_session_handle",
+			"oauth_customzied_field",
+		}}
+
+		t.Run("without customized fields", func(t *testing.T) {
+			header := http.Header{}
+			customized := map[string]string{}
+			err := c.SetAuthorizationHeader(header, &ot.credentials, ot.method, ot.url, ot.form, customized)
+			if err != nil {
+				t.Errorf("authorizationHeader(&cred, %q, %q, %v) returned error %v", ot.method, ot.url.String(), ot.form, err)
+				return
+			}
+			if header.Get(AuthorizationHeader) != ot.header {
+				t.Errorf("authorizationHeader(&cred, %q, %q, %v) =\n      %s\nwant: %s", ot.method, ot.url.String(), ot.form, header, ot.header)
+			}
+		})
+
+		t.Run("ignore customized fields that are not registered in OAuthKeys", func(t *testing.T) {
+			header := http.Header{}
+			customized := map[string]string{"oauth_customzied_field_a": "A"}
+			err := c.SetAuthorizationHeader(header, &ot.credentials, ot.method, ot.url, ot.form, customized)
+			if err != nil {
+				t.Errorf("authorizationHeader(&cred, %q, %q, %v) returned error %v", ot.method, ot.url.String(), ot.form, err)
+				return
+			}
+			if header.Get(AuthorizationHeader) != ot.header {
+				t.Errorf("authorizationHeader(&cred, %q, %q, %v) =\n      %s\nwant: %s", ot.method, ot.url.String(), ot.form, header, ot.header)
+			}
+		})
+
+		t.Run("use customized fields to sign signature", func(t *testing.T) {
+			header := http.Header{}
+			const fieldName = "oauth_customzied_field"
+			customized := map[string]string{fieldName: "customized_value"}
+			err := c.SetAuthorizationHeader(header, &ot.credentials, ot.method, ot.url, ot.form, customized)
+			if err != nil {
+				t.Errorf("authorizationHeader(&cred, %q, %q, %v) returned error %v", ot.method, ot.url.String(), ot.form, err)
+				return
+			}
+			if !strings.Contains(header.Get(AuthorizationHeader), fieldName) {
+				t.Errorf("authorizationHeader(&cred, %q, %q, %v) =\n      %s\nshould have field %q", ot.method, ot.url.String(), ot.form, header, fieldName)
+			}
+			if header.Get(AuthorizationHeader) == ot.header { // I'm too lazy to compute the right signature
+				t.Errorf("authorizationHeader(&cred, %q, %q, %v) =\n      %s\nshould have a different signature", ot.method, ot.url.String(), ot.form, header)
+			}
+		})
+	}
+}
+
 func TestNonce(t *testing.T) {
 	// This test is flaky, but failures should be very rare.
 	n := nonce()
@@ -321,7 +401,7 @@ func TestRequestToken(t *testing.T) {
 		if contentType := r.Header.Get("Content-Type"); contentType != expectedContenType {
 			t.Errorf("got content type %q, want %q", contentType, expectedContenType)
 		}
-		if auth := r.Header.Get("Authorization"); !strings.Contains(auth, `oauth_verifier="verifier"`) {
+		if auth := r.Header.Get(AuthorizationHeader); !strings.Contains(auth, `oauth_verifier="verifier"`) {
 			t.Errorf("verifier missing from auth header %q", auth)
 		}
 		v := url.Values{}
@@ -348,7 +428,7 @@ func TestRequestToken(t *testing.T) {
 
 func TestRenewRequestCredentials(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		a := r.Header.Get("Authorization")
+		a := r.Header.Get(AuthorizationHeader)
 		if !strings.Contains(a, `oauth_token="token"`) {
 			t.Errorf("Authorization header %q should contains %q", a, `oauth_token="token"`)
 		}
@@ -413,7 +493,7 @@ func TestGet(t *testing.T) {
 	v := url.Values{}
 	v.Set("form", "foo")
 	c := Client{}
-	resp, err := c.Get(&http.Client{Jar: jar}, &Credentials{}, u.String(), v)
+	resp, err := c.Get(&http.Client{Jar: jar}, &Credentials{}, u.String(), v, nil)
 	if err != nil {
 		t.Errorf("returned error %v", err)
 	}
@@ -437,7 +517,7 @@ func TestGet_ClientNil(t *testing.T) {
 	defer ts.Close()
 
 	c := Client{}
-	resp, err := c.Get(nil, &Credentials{}, ts.URL, nil)
+	resp, err := c.Get(nil, &Credentials{}, ts.URL, nil, nil)
 	if err != nil {
 		t.Errorf("returned error %v", err)
 	}
@@ -478,7 +558,7 @@ func TestGetContext(t *testing.T) {
 	jar.SetCookies(u, []*http.Cookie{&http.Cookie{Name: "client-cookie", Value: "foobar"}})
 	ctx := context.WithValue(context.Background(), HTTPClient, &http.Client{Jar: jar})
 	c := Client{}
-	resp, err := c.GetContext(ctx, &Credentials{}, u.String(), nil)
+	resp, err := c.GetContext(ctx, &Credentials{}, u.String(), nil, nil)
 	if err != nil {
 		t.Errorf("returned error %v", err)
 	}
@@ -529,7 +609,7 @@ func TestGetContext_Cancel(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	c := Client{}
-	_, err := c.GetContext(ctx, &Credentials{}, ts.URL, nil)
+	_, err := c.GetContext(ctx, &Credentials{}, ts.URL, nil, nil)
 	if err == nil {
 		t.Error("error should not be nil")
 	}

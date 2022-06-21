@@ -12,6 +12,10 @@ OAuth1 is a [Go](https://golang.org/) client for the OAuth 1.0, OAuth 1.0a and
 * RSA-SHA1
 * RSA-SHA256
 
+---
+
+* Support adding customized fields in Authorization header
+
 ## Installation
 
     go get github.com/gomodule/oauth1/oauth

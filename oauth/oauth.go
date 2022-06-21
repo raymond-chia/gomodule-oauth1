@@ -317,6 +317,10 @@ type Client struct {
 	// Header specifies optional extra headers for requests.
 	Header http.Header
 
+	// OAuthKeys is the order of authorization fields when signing OAuth 1.0a signature.
+	// Nil means using oauthKeys.
+	OAuthKeys []string
+
 	// SignatureMethod specifies the method for signing a request.
 	SignatureMethod SignatureMethod
 
@@ -327,13 +331,22 @@ type Client struct {
 }
 
 type request struct {
-	credentials   *Credentials
-	method        string
-	u             *url.URL
-	form          url.Values
-	verifier      string
-	sessionHandle string
-	callbackURL   string
+	credentials      *Credentials
+	method           string
+	u                *url.URL
+	form             url.Values
+	verifier         string
+	sessionHandle    string
+	callbackURL      string
+	customizedFields map[string]string
+}
+
+func (c *Client) oAuthKeys() []string {
+	oauthKeys := oauthKeys
+	if c.OAuthKeys != nil {
+		oauthKeys = c.OAuthKeys
+	}
+	return oauthKeys
 }
 
 var testHook = func(map[string]string) {}
@@ -343,11 +356,18 @@ var testHook = func(map[string]string) {}
 // http://tools.ietf.org/html/rfc5849#section-3.4 for more information about
 // signatures.
 func (c *Client) oauthParams(r *request) (map[string]string, error) {
-	oauthParams := map[string]string{
-		"oauth_consumer_key":     c.Credentials.Token,
-		"oauth_signature_method": c.SignatureMethod.String(),
-		"oauth_version":          "1.0",
+	oauthParams := map[string]string{}
+
+	for _, k := range c.oAuthKeys() {
+		v, ok := r.customizedFields[k]
+		if ok {
+			oauthParams[k] = v
+		}
 	}
+
+	oauthParams["oauth_consumer_key"] = c.Credentials.Token
+	oauthParams["oauth_signature_method"] = c.SignatureMethod.String()
+	oauthParams["oauth_version"] = "1.0"
 
 	if c.SignatureMethod != PLAINTEXT {
 		oauthParams["oauth_timestamp"] = strconv.FormatInt(time.Now().Unix(), 10)
@@ -475,8 +495,9 @@ func (c *Client) authorizationHeader(r *request) (string, error) {
 		return "", err
 	}
 	var h []byte
+
 	// Append parameters in a fixed order to support testing.
-	for _, k := range oauthKeys {
+	for _, k := range c.oAuthKeys() {
 		if v, ok := p[k]; ok {
 			if h == nil {
 				h = []byte(`OAuth `)
@@ -496,8 +517,8 @@ func (c *Client) authorizationHeader(r *request) (string, error) {
 //
 // See http://tools.ietf.org/html/rfc5849#section-3.5.1 for information about
 // transmitting OAuth parameters in an HTTP request header.
-func (c *Client) SetAuthorizationHeader(header http.Header, credentials *Credentials, method string, u *url.URL, form url.Values) error {
-	v, err := c.authorizationHeader(&request{credentials: credentials, method: method, u: u, form: form})
+func (c *Client) SetAuthorizationHeader(header http.Header, credentials *Credentials, method string, u *url.URL, form url.Values, customizedFields map[string]string) error {
+	v, err := c.authorizationHeader(&request{credentials: credentials, method: method, u: u, form: form, customizedFields: customizedFields})
 	if err != nil {
 		return err
 	}
@@ -537,47 +558,47 @@ func (c *Client) do(ctx context.Context, urlStr string, r *request) (*http.Respo
 }
 
 // Get issues a GET to the specified URL with form added as a query string.
-func (c *Client) Get(client *http.Client, credentials *Credentials, urlStr string, form url.Values) (*http.Response, error) {
+func (c *Client) Get(client *http.Client, credentials *Credentials, urlStr string, form url.Values, customizedFields map[string]string) (*http.Response, error) {
 	ctx := context.WithValue(context.Background(), HTTPClient, client)
-	return c.GetContext(ctx, credentials, urlStr, form)
+	return c.GetContext(ctx, credentials, urlStr, form, customizedFields)
 }
 
 // GetContext uses Context to perform Get.
-func (c *Client) GetContext(ctx context.Context, credentials *Credentials, urlStr string, form url.Values) (*http.Response, error) {
-	return c.do(ctx, urlStr, &request{method: http.MethodGet, credentials: credentials, form: form})
+func (c *Client) GetContext(ctx context.Context, credentials *Credentials, urlStr string, form url.Values, customizedFields map[string]string) (*http.Response, error) {
+	return c.do(ctx, urlStr, &request{method: http.MethodGet, credentials: credentials, form: form, customizedFields: customizedFields})
 }
 
 // Post issues a POST with the specified form.
-func (c *Client) Post(client *http.Client, credentials *Credentials, urlStr string, form url.Values) (*http.Response, error) {
+func (c *Client) Post(client *http.Client, credentials *Credentials, urlStr string, form url.Values, customizedFields map[string]string) (*http.Response, error) {
 	ctx := context.WithValue(context.Background(), HTTPClient, client)
-	return c.PostContext(ctx, credentials, urlStr, form)
+	return c.PostContext(ctx, credentials, urlStr, form, customizedFields)
 }
 
 // PostContext uses Context to perform Post.
-func (c *Client) PostContext(ctx context.Context, credentials *Credentials, urlStr string, form url.Values) (*http.Response, error) {
-	return c.do(ctx, urlStr, &request{method: http.MethodPost, credentials: credentials, form: form})
+func (c *Client) PostContext(ctx context.Context, credentials *Credentials, urlStr string, form url.Values, customizedFields map[string]string) (*http.Response, error) {
+	return c.do(ctx, urlStr, &request{method: http.MethodPost, credentials: credentials, form: form, customizedFields: customizedFields})
 }
 
 // Delete issues a DELETE with the specified form.
-func (c *Client) Delete(client *http.Client, credentials *Credentials, urlStr string, form url.Values) (*http.Response, error) {
+func (c *Client) Delete(client *http.Client, credentials *Credentials, urlStr string, form url.Values, customizedFields map[string]string) (*http.Response, error) {
 	ctx := context.WithValue(context.Background(), HTTPClient, client)
-	return c.DeleteContext(ctx, credentials, urlStr, form)
+	return c.DeleteContext(ctx, credentials, urlStr, form, customizedFields)
 }
 
 // DeleteContext uses Context to perform Delete.
-func (c *Client) DeleteContext(ctx context.Context, credentials *Credentials, urlStr string, form url.Values) (*http.Response, error) {
-	return c.do(ctx, urlStr, &request{method: http.MethodDelete, credentials: credentials, form: form})
+func (c *Client) DeleteContext(ctx context.Context, credentials *Credentials, urlStr string, form url.Values, customizedFields map[string]string) (*http.Response, error) {
+	return c.do(ctx, urlStr, &request{method: http.MethodDelete, credentials: credentials, form: form, customizedFields: customizedFields})
 }
 
 // Put issues a PUT with the specified form.
-func (c *Client) Put(client *http.Client, credentials *Credentials, urlStr string, form url.Values) (*http.Response, error) {
+func (c *Client) Put(client *http.Client, credentials *Credentials, urlStr string, form url.Values, customizedFields map[string]string) (*http.Response, error) {
 	ctx := context.WithValue(context.Background(), HTTPClient, client)
-	return c.PutContext(ctx, credentials, urlStr, form)
+	return c.PutContext(ctx, credentials, urlStr, form, customizedFields)
 }
 
 // PutContext uses Context to perform Put.
-func (c *Client) PutContext(ctx context.Context, credentials *Credentials, urlStr string, form url.Values) (*http.Response, error) {
-	return c.do(ctx, urlStr, &request{method: http.MethodPut, credentials: credentials, form: form})
+func (c *Client) PutContext(ctx context.Context, credentials *Credentials, urlStr string, form url.Values, customizedFields map[string]string) (*http.Response, error) {
+	return c.do(ctx, urlStr, &request{method: http.MethodPut, credentials: credentials, form: form, customizedFields: customizedFields})
 }
 
 func (c *Client) requestCredentials(ctx context.Context, u string, r *request) (*Credentials, url.Values, error) {
